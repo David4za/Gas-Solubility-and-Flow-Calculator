@@ -44,6 +44,14 @@ def salinity_to_mol_L(salinity_mg_L):
     molar_mass_NaCl = 58.44  # g/mol
     return (salinity_mg_L / 1000.0) / molar_mass_NaCl
 
+def solubility_mol_L_to_g_m3(sol_mol_L, gas):
+    """
+    Convert solubility from mol/L to g/m³ for the given gas.
+    1 mol/L = 1000 mol/m³, then × molar_mass (g/mol) → g/m³.
+    """
+    mm = gas_data[gas]['molar_mass']  # g/mol
+    return sol_mol_L * 1000.0 * mm
+
 # Gas solubility using van 't Hoff and salinity correction
 def gas_solubility(gas, Temp_C, Pressure_atm, salinity_mg_L):
     """
@@ -227,7 +235,7 @@ if st.button("Calculate"):
     nu = calculate_kinematic_viscosity(mu_dyn, rho)
     cond = calculate_conductivity(Temp_C, salinity_mg_L)
 
-    st.markdown(" ## Results ∰")
+    st.markdown(" ## Results💡")
     st.write(f"**Solubility:** {sol:.6f} mol/L")
     st.write(f"**Gas flow needed:** {mol_min:.4f} mol/min")
     st.write(f"**Gas volume (actual):** {actual_m3_hr:.4f} m³/hr")
@@ -241,32 +249,64 @@ if st.button("Calculate"):
 
     # ----- Solubility vs Temp --------
 
+    st.markdown("## Graphs 📊")
+
 
     temps = np.linspace(Temp_C - 10.0, Temp_C + 10.0, 20)
-    sol_vs_T = [gas_solubility(gas, T, Pressure_atm, salinity_mg_L) for T in temps]
+    sol_vs_T_mol = [gas_solubility(gas, T, Pressure_atm, salinity_mg_L) for T in temps]
+    sol_vs_T_gm3 = [solubility_mol_L_to_g_m3(sol, gas) for sol in sol_vs_T_mol]
 
     df_Temp = pd.DataFrame({
         "Temperature (°C)": temps,
-        "Solubility (mol/L)" : sol_vs_T
+        "Conc (g/m³)" : sol_vs_T_gm3
         })
     
-    fig_T = px.line(df_Temp, x="Temperature (°C)", y="Solubility (mol/L)",
-                    title=f"Solubility vs Temperature @ {Pressure_atm:.2f} atm, {salinity_mg_L:.0f} mg/L",
+    fig_T = px.line(df_Temp, x="Temperature (°C)", y="Conc (g/m³)",
+                    title=f"Solubility vs Temperature @ {Pressure_atm:.2f} atm, {salinity_mg_L:.0f} mg/L for {gas.title()} 🥶",
                     markers=True)
-    
+    fig_T.update_traces(line_color = 'orange')
     st.plotly_chart(fig_T)
 
     # ------- Solubility vs Pressure ------
-    pressures = np.linspace(Pressure_atm - 10.0, Pressure_atm + 10.0, 100)
-    sol_vs_P = [gas_solubility(gas, Temp_C, P, salinity_mg_L ) for P in pressures]
+    pressures = np.linspace(Pressure_atm - 0.9, Pressure_atm + 0.9, 100)
+    sol_vs_P_mol  = [gas_solubility(gas, Temp_C, P, salinity_mg_L ) for P in pressures]
+    sol_vs_P_gm3 = [solubility_mol_L_to_g_m3(sol, gas) for sol in sol_vs_P_mol]
 
     df_P = pd.DataFrame({
         "Pressure (atm)"   : pressures,
-        "Solubility (mol/L)": sol_vs_P
+        "Conc (g/m³)": sol_vs_P_gm3
         })
     
-    fig_P = px.line(df_P, x="Pressure (atm)", y="Solubility (mol/L)", 
-                    title=f"Solubility vs Pressure @ {Temp_C:.1f} °C, {salinity_mg_L:.0f} mg/L",
-                    markers=True)
+    fig_P = px.line(df_P, x="Pressure (atm)", y="Conc (g/m³)", 
+                    title=f"Solubility vs Pressure @ {Temp_C:.1f} °C, {salinity_mg_L:.0f} mg/L for {gas.title()} 💎",
+                    markers=True,
+                    line_shape='linear')
     
+    fig_P.update_traces(line_color = 'lightgreen')
     st.plotly_chart(fig_P)
+
+    # ----- Combined Heat Map -----
+    data = []
+
+    for T in temps:
+        for P in pressures:
+            data.append({
+            "Temperature (°C)": T,
+            "Pressure (atm)"  : P,
+            "Solubility"      : gas_solubility(gas, T, P, salinity_mg_L)
+            })
+    
+    df_combined = pd.DataFrame(data)
+
+    pivot_combo = df_combined.pivot(index="Temperature (°C)", columns="Pressure (atm)", values="Solubility")
+
+    fig_combo = px.imshow(pivot_combo, aspect='auto', origin='lower',
+                          labels={
+                                    "x": "Pressure (atm)",
+                                    "y": "Temperature (°C)",
+                                    "color": "Solubility (mol/L)"
+                          },
+                          title=f"Solubility Heatmap @ {salinity_mg_L:.0f} mg/L, Gas = {gas.title()} 🥵",
+                          color_continuous_scale='Greys')
+    
+    st.plotly_chart(fig_combo)
