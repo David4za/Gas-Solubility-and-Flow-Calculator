@@ -187,7 +187,7 @@ def convert_mol_min_to_normal_m3_hr(mol_per_min, T_norm_K=273.15, P_norm_Pa=1013
     vol_m3_s = (mol_per_sec * R * T_norm_K) / P_norm_Pa
     return vol_m3_s * 3600.0
 
-# --- App ---
+# ------------------------------------ Streamlit Application ------------------------------------
 st.set_page_config('Gas Solubility and Flow Calculator', page_icon="ↂ", layout='wide')
 st.title("Gas Solubility and Flow Calculator")
 
@@ -235,24 +235,39 @@ if st.button("Calculate"):
     nu = calculate_kinematic_viscosity(mu_dyn, rho)
     cond = calculate_conductivity(Temp_C, salinity_mg_L)
 
-    st.markdown(" ## Results💡")
-    st.write(f"**Solubility:** {sol:.6f} mol/L")
-    st.write(f"**Gas flow needed:** {mol_min:.4f} mol/min")
-    st.write(f"**Gas volume (actual):** {actual_m3_hr:.4f} m³/hr")
-    st.write(f"**Gas volume (Normal 0 °C,1 atm):** {normal_m3_hr:.4f} Nm³/hr")
-    st.write(f"**Density (UNESCO):** {rho:.2f} kg/m³")
-    st.write(f"**Dynamic viscosity:** {mu_dyn:.6e} cP")
-    st.write(f"**Kinematic viscosity:** {nu:.6e} m²/s")
-    st.write(f"**Electrical conductivity:** {cond:.3f} S/m")
+    st.markdown(" # Results💡")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("Solubility (mol/L)", f"{sol:.6f}")
+        st.metric("Gas Flow Needed (mol/min)", f"{mol_min:.4f}")
+        st.metric("Actual Gas Volume (m³/hr)", f"{actual_m3_hr:.4f}")
+        st.metric("Normal Gas Volume (Nm³/hr)", f"{normal_m3_hr:.4f}")
+
+    with col2:
+        st.metric("Density (kg/m³)", f"{rho:.2f}")
+        st.metric("Dynamic Viscosity (cP)", f"{mu_dyn:.6e}")
+        st.metric("Kinematic Viscosity (m²/s)", f"{nu:.6e}")
+        st.metric("Conductivity (S/m)", f"{cond:.3f}")
+
+    # st.write(f"**Solubility:** {sol:.6f} mol/L")
+    # st.write(f"**Gas flow needed:** {mol_min:.4f} mol/min")
+    # st.write(f"**Gas volume (actual):** {actual_m3_hr:.4f} m³/hr")
+    # st.write(f"**Gas volume (Normal 0 °C,1 atm):** {normal_m3_hr:.4f} Nm³/hr")
+    # st.write(f"**Density (UNESCO):** {rho:.2f} kg/m³")
+    # st.write(f"**Dynamic viscosity:** {mu_dyn:.6e} cP")
+    # st.write(f"**Kinematic viscosity:** {nu:.6e} m²/s")
+    # st.write(f"**Conductivity:** {cond:.3f} S/m")
 
     # Graphs
 
     # ----- Solubility vs Temp --------
 
-    st.markdown("## Graphs 📊")
+    st.markdown("# Graphs 📊")
 
 
-    temps = np.linspace(Temp_C - 10.0, Temp_C + 10.0, 20)
+    temps = np.linspace(Temp_C - 10.0, Temp_C + 10.0, 100)
     sol_vs_T_mol = [gas_solubility(gas, T, Pressure_atm, salinity_mg_L) for T in temps]
     sol_vs_T_gm3 = [solubility_mol_L_to_g_m3(sol, gas) for sol in sol_vs_T_mol]
 
@@ -267,7 +282,7 @@ if st.button("Calculate"):
     fig_T.update_traces(line_color = 'orange')
     st.plotly_chart(fig_T)
 
-    # ------- Solubility vs Pressure ------
+    # ------- Solubility vs Pressure -------
     pressures = np.linspace(Pressure_atm - 0.9, Pressure_atm + 0.9, 100)
     sol_vs_P_mol  = [gas_solubility(gas, Temp_C, P, salinity_mg_L ) for P in pressures]
     sol_vs_P_gm3 = [solubility_mol_L_to_g_m3(sol, gas) for sol in sol_vs_P_mol]
@@ -285,7 +300,7 @@ if st.button("Calculate"):
     fig_P.update_traces(line_color = 'lightgreen')
     st.plotly_chart(fig_P)
 
-    # ----- Combined Heat Map -----
+    # ------- Combined Heat Map -------
     data = []
 
     for T in temps:
