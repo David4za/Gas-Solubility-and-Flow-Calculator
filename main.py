@@ -258,10 +258,10 @@ if st.button("Calculate"):
 
     df_Temp = pd.DataFrame({
         "Temperature (°C)": temps,
-        "Conc (g/m³)" : sol_vs_T_gm3
+        "Solubility (g/m³)" : sol_vs_T_gm3
         })
     
-    fig_T = px.line(df_Temp, x="Temperature (°C)", y="Conc (g/m³)",
+    fig_T = px.line(df_Temp, x="Temperature (°C)", y="Solubility (g/m³)",
                     title=f"Solubility vs Temperature @ {Pressure_atm:.2f} atm, {salinity_mg_L:.0f} mg/L for {gas.title()} 🥶",
                     markers=True)
     fig_T.update_traces(line_color = 'orange')
@@ -274,10 +274,10 @@ if st.button("Calculate"):
 
     df_P = pd.DataFrame({
         "Pressure (atm)"   : pressures,
-        "Conc (g/m³)": sol_vs_P_gm3
+        "Solubility (g/m³)": sol_vs_P_gm3
         })
     
-    fig_P = px.line(df_P, x="Pressure (atm)", y="Conc (g/m³)", 
+    fig_P = px.line(df_P, x="Pressure (atm)", y="Solubility (g/m³)", 
                     title=f"Solubility vs Pressure @ {Temp_C:.1f} °C, {salinity_mg_L:.0f} mg/L for {gas.title()} 💎",
                     markers=True,
                     line_shape='linear')
@@ -293,7 +293,7 @@ if st.button("Calculate"):
             data.append({
             "Temperature (°C)": T,
             "Pressure (atm)"  : P,
-            "Solubility"      : gas_solubility(gas, T, P, salinity_mg_L)
+            "Solubility"      : solubility_mol_L_to_g_m3(sol_mol_L=(gas_solubility(gas, T, P, salinity_mg_L)), gas=gas)
             })
     
     df_combined = pd.DataFrame(data)
@@ -304,7 +304,7 @@ if st.button("Calculate"):
                           labels={
                                     "x": "Pressure (atm)",
                                     "y": "Temperature (°C)",
-                                    "color": "Solubility (mol/L)"
+                                    "color": "Solubility (g/m³)"
                           },
                           title=f"Solubility Heatmap @ {salinity_mg_L:.0f} mg/L, Gas = {gas.title()} 🥵",
                           color_continuous_scale='Greys')
