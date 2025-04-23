@@ -180,7 +180,7 @@ def convert_mol_min_to_normal_m3_hr(mol_per_min, T_norm_K=273.15, P_norm_Pa=1013
     return vol_m3_s * 3600.0
 
 # --- App ---
-
+st.set_page_config('Gas Solubility and Flow Calculator', page_icon="ↂ", layout='wide')
 st.title("Gas Solubility and Flow Calculator")
 
 col1, col2 = st.columns(2)
@@ -237,16 +237,36 @@ if st.button("Calculate"):
     st.write(f"**Kinematic viscosity:** {nu:.6e} m²/s")
     st.write(f"**Electrical conductivity:** {cond:.3f} S/m")
 
-# hours = list(range(0,25))
-# buildup = [m3_per_hr * h for h in hours]
+    # Graphs
 
-# df = pd.DataFrame({
-#     "Hours": hours,
-#     "Cumulative Gas Volume (m³)": buildup
-# })
+    # ----- Solubility vs Temp --------
 
-# fig = px.line(df, x="Hours", y="Cumulative Gas Volume (m³)", title="Gas Buildup Over Time",
-#               labels={"Hours": 'Time (Hours)', "Cumulative Gas Volume (m³)": 'Gas Volume (m³)'},
-#               markers=True)
-# st.markdown("### Ploty Chart")
-# st.plotly_chart(fig)
+
+    temps = np.linspace(Temp_C - 10.0, Temp_C + 10.0, 20)
+    sol_vs_T = [gas_solubility(gas, T, Pressure_atm, salinity_mg_L) for T in temps]
+
+    df_Temp = pd.DataFrame({
+        "Temperature (°C)": temps,
+        "Solubility (mol/L)" : sol_vs_T
+        })
+    
+    fig_T = px.line(df_Temp, x="Temperature (°C)", y="Solubility (mol/L)",
+                    title=f"Solubility vs Temperature @ {Pressure_atm:.2f} atm, {salinity_mg_L:.0f} mg/L",
+                    markers=True)
+    
+    st.plotly_chart(fig_T)
+
+    # ------- Solubility vs Pressure ------
+    pressures = np.linspace(Pressure_atm - 10.0, Pressure_atm + 10.0, 100)
+    sol_vs_P = [gas_solubility(gas, Temp_C, P, salinity_mg_L ) for P in pressures]
+
+    df_P = pd.DataFrame({
+        "Pressure (atm)"   : pressures,
+        "Solubility (mol/L)": sol_vs_P
+        })
+    
+    fig_P = px.line(df_P, x="Pressure (atm)", y="Solubility (mol/L)", 
+                    title=f"Solubility vs Pressure @ {Temp_C:.1f} °C, {salinity_mg_L:.0f} mg/L",
+                    markers=True)
+    
+    st.plotly_chart(fig_P)
