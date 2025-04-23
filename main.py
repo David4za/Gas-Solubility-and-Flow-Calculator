@@ -2,6 +2,8 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.express as px
+from CoolProp.CoolProp import PropsSI
+from CoolProp.CoolProp import AbstractState, PT_INPUTS
 
 # constants
 
@@ -16,6 +18,32 @@ gas_data = {
     'nitrogen':{'H0': 1600.0, 'delta_H_sol': 5800.0,  'k_s': 0.13, 'molar_mass': 28.02},
     'air':     {'H0': 770.0,  'delta_H_sol': 10000.0, 'k_s': 0.12, 'molar_mass': 28.97}
 }
+
+map_names = {
+    'methane': 'Methane',
+    'co2':     'CO2',
+    'nitrogen':'Nitrogen',
+    'air':     'Air'
+}
+
+def real_gas_props(gas, Temp_C, Pressure_atm):
+    """Get real‐gas Z, φ, ρ_mass, μ at T,P from CoolProp using AbstractState."""
+    # Map your gas name to the CoolProp fluid string
+    fluid = map_names[gas.lower()]    # e.g. "Methane"
+    T_K = Temp_C + 273.15
+    P_Pa = Pressure_atm * 101325.0
+
+    # Build an AbstractState for the HEOS backend
+    AS = AbstractState("HEOS", fluid)
+    AS.update(PT_INPUTS, P_Pa, T_K)
+
+    # Now pull out what you need:
+    Z        = AS.compressibility_factor()       # dimensionless Z
+    phi      = AS.fugacity_coefficient(0)        # fugacity coeff of component 0
+    rho_mass = AS.rhomass()                      # kg/m³
+    mu       = AS.viscosity()                    # Pa·s
+
+    return Z, phi, rho_mass, mu
 
 def fahrenheit_to_celsius(F):
     return (F - 32.0) * (5.0 / 9.0)
@@ -52,29 +80,51 @@ def solubility_mol_L_to_g_m3(sol_mol_L, gas):
     mm = gas_data[gas]['molar_mass']  # g/mol
     return sol_mol_L * 1000.0 * mm
 
-# Gas solubility using van 't Hoff and salinity correction
 def gas_solubility(gas, Temp_C, Pressure_atm, salinity_mg_L):
-    """
-    Calculate gas solubility in water (mol/L) for a given gas at
-    temperature (°C), pressure (atm), and salinity (mg/L NaCl).
-    """
-    if gas.lower() not in gas_data:
-        raise ValueError(f"Unsupported gas type: {gas}")
+    """Real‐gas Henry’s law + salinity correction."""
+    # 1) get real‐gas correction
+    Z, phi, _, _ = real_gas_props(gas, Temp_C, Pressure_atm)
 
     props = gas_data[gas.lower()]
     Temp_K = Temp_C + 273.15
 
-    # van 't Hoff relation for Henry's constant
-    ln_H = np.log(props['H0']) + (props['delta_H_sol'] / R) * (1.0 / T0 - 1.0 / Temp_K)
-    H_T = np.exp(ln_H)
+    # 2) van ’t Hoff for H(T)
+    ln_H = np.log(props['H0']) + (props['delta_H_sol']/R)*(1/T0 - 1/Temp_K)
+    H_T  = np.exp(ln_H)
 
-    # salinity correction (Sechenov equation)
-    salinity_mol = salinity_to_mol_L(salinity_mg_L)
-    correction = 10.0 ** (-props['k_s'] * salinity_mol)
+    # 3) salinity correction
+    sal_mol = salinity_to_mol_L(salinity_mg_L)
+    corr    = 10.0**(-props['k_s'] * sal_mol)
 
-    # solubility (C) = P/H
-    C0 = Pressure_atm / H_T
-    return C0 * correction
+    # 4) real‐gas solubility: choose φ or Z correction
+    C0 = (phi * Pressure_atm) / H_T        # fugacity‐based
+    # C0 = (Z   * Pressure_atm) / H_T      # or compressibility‐based
+
+    return C0 * corr
+
+# Gas solubility using van 't Hoff and salinity correction
+# def gas_solubility(gas, Temp_C, Pressure_atm, salinity_mg_L):
+#     """
+#     Calculate gas solubility in water (mol/L) for a given gas at
+#     temperature (°C), pressure (atm), and salinity (mg/L NaCl).
+#     """
+#     if gas.lower() not in gas_data:
+#         raise ValueError(f"Unsupported gas type: {gas}")
+
+#     props = gas_data[gas.lower()]
+#     Temp_K = Temp_C + 273.15
+
+#     # van 't Hoff relation for Henry's constant
+#     ln_H = np.log(props['H0']) + (props['delta_H_sol'] / R) * (1.0 / T0 - 1.0 / Temp_K)
+#     H_T = np.exp(ln_H)
+
+#     # salinity correction (Sechenov equation)
+#     salinity_mol = salinity_to_mol_L(salinity_mg_L)
+#     correction = 10.0 ** (-props['k_s'] * salinity_mol)
+
+#     # solubility (C) = P/H
+#     C0 = Pressure_atm / H_T
+#     return C0 * correction
 
 
 def unesco_density(Temp_C, salinity_mg_L):
@@ -135,26 +185,32 @@ def calculate_conductivity(Temp_C, salinity_mg_L):
     return C_ref * (S / 35.0) * (1 + a*(Temp_C - 15.0) + b*(Temp_C - 15.0)**2)
 
 # Viscosity (cP)
-def calculate_viscosity(Temp_C, salinity_mg_L):
+def calculate_dynamic_viscosity_cP(Temp_C, salinity_mg_L):
     """
-    Estimate dynamic viscosity of saline water (cP) using empirical relation.
+    Dynamic viscosity of saline water, returned in centipoise (cP).
     """
-    S = salinity_mg_L / 1000.0
     A, B, C = 2.414e-5, 247.8, 140.0
-    # viscosity of pure water (Pa·s) = A * 10^(B/(T- C))
-    mu_water = A * 10.0 ** (B / (Temp_C + 273.15 - C))
-    # convert Pa·s to cP (1 Pa·s = 1000 cP)
-    mu_cP = mu_water * 1000.0
-    # salinity correction
-    return mu_cP * (1.0 + 0.001 * S)
+    T_K = Temp_C + 273.15
+    mu_water_pa_s = A * 10.0**(B / (T_K - C))
+    S = salinity_mg_L / 1000.0
+    # include salinity correction (still Pa·s)
+    mu_pa_s = mu_water_pa_s * (1.0 + 0.001 * S)
+    # convert Pa·s → cP (1 Pa·s = 1 000 cP)
+    mu_cP = mu_pa_s * 1000.0
+    return mu_cP
+
+# def simple_density(Temp_C, salinity_mg_L):
+#      """Simple linear model for water density (kg/m^3)."""
+#      S = salinity_mg_L / 1000.0  # convert mg/L -> g/L -> kg/kg approx
+#      return 1000.0 + (0.668 * S) - (0.001 * S * Temp_C)
 
 # Density uncertainty between models
-def density_uncertainty(Temp_C,salinity_mg_L) -> tuple[float, float, float]:
+def density_uncertainty(Temp_C,salinity_mg_L):
     """
     Compute both simple and UNESCO densities and their difference (kg/m^3).
     Returns (rho_simple, rho_unesco, abs_delta).
     """
-    rho_s = simple_density(Temp_C, salinity_mg_L)
+    # rho_s = simple_density(Temp_C, salinity_mg_L)
     rho_u = unesco_density(Temp_C, salinity_mg_L)
     return rho_s, rho_u, abs(rho_s - rho_u)
 
@@ -164,19 +220,34 @@ def gas_flow_rate_needed(solubility, water_flow_L_min):
     solubility in mol/L, flow in L/min."""
     return solubility * water_flow_L_min
 
+def convert_mol_min_to_m3_hr(gas, mol_per_min, Temp_C, Pressure_atm):
+    """Convert flow [mol/min] → volume [m³/hr] using real‐gas Z from CoolProp."""
+    # get real‐gas props (we only care about Z here)
+    Z, _, _, _ = real_gas_props(gas, Temp_C, Pressure_atm)
 
-def convert_mol_min_to_m3_hr(mol_per_min, Temp_C, Pressure_atm):
-    """
-    Convert a molar flow rate (mol/min) to volumetric flow (m^3/hr)
-    at given temperature (°C) and pressure (atm) using ideal gas law.
-    """
-    Temp_K = Temp_C + 273.15
-    Pressure_Pa = Pressure_atm * 101325.0
-    mol_per_sec = mol_per_min / 60.0
-    # volume per second (m^3/s) = n*R*T/P
-    vol_m3_s = (mol_per_sec * R * Temp_K) / Pressure_Pa
-    # convert to m3/hr
-    return vol_m3_s * 3600.0
+    # convert units
+    T_K    = Temp_C + 273.15
+    P_Pa   = Pressure_atm * 101325.0
+    mol_s  = mol_per_min / 60.0
+
+    # V̇ = ṅ·R·T / (P·Z)
+    vol_s  = (mol_s * R * T_K) / (P_Pa * Z)
+
+    # back to m³/hr
+    return vol_s * 3600.0
+
+# def convert_mol_min_to_m3_hr(mol_per_min, Temp_C, Pressure_atm):
+#     """
+#     Convert a molar flow rate (mol/min) to volumetric flow (m^3/hr)
+#     at given temperature (°C) and pressure (atm) using ideal gas law.
+#     """
+#     Temp_K = Temp_C + 273.15
+#     Pressure_Pa = Pressure_atm * 101325.0
+#     mol_per_sec = mol_per_min / 60.0
+#     # volume per second (m^3/s) = n*R*T/P
+#     vol_m3_s = (mol_per_sec * R * Temp_K) / Pressure_Pa
+#     # convert to m3/hr
+#     return vol_m3_s * 3600.0
 
 def convert_mol_min_to_normal_m3_hr(mol_per_min, T_norm_K=273.15, P_norm_Pa=101325.0):
     """
@@ -223,42 +294,39 @@ else:
     Pressure_atm = press_input
 
 
-if st.button("Calculate"):
-    # solubility & flow
-    sol = gas_solubility(gas, Temp_C, Pressure_atm, salinity_mg_L)
-    mol_min = gas_flow_rate_needed(sol, flow_L_min)
-    actual_m3_hr = convert_mol_min_to_m3_hr(mol_min, Temp_C, Pressure_atm)
-    normal_m3_hr = convert_mol_min_to_normal_m3_hr(mol_min)
 
-    rho = unesco_density(Temp_C, salinity_mg_L)
-    mu_dyn = calculate_dynamic_viscosity(Temp_C, salinity_mg_L)
-    nu = calculate_kinematic_viscosity(mu_dyn, rho)
-    cond = calculate_conductivity(Temp_C, salinity_mg_L)
+if st.button("Calculate"):
+    # Real-gas props for gas (optional display)
+    Z, phi, rho_gas, mu_gas = real_gas_props(gas, Temp_C, Pressure_atm)
+
+    # Solubility & flow
+    sol         = gas_solubility(gas, Temp_C, Pressure_atm, salinity_mg_L)
+    mol_min     = gas_flow_rate_needed(sol, flow_L_min)
+    actual_m3_hr= convert_mol_min_to_m3_hr(gas, mol_min, Temp_C, Pressure_atm)  # ← pass gas
+    normal_m3_hr= convert_mol_min_to_normal_m3_hr(mol_min)
+
+    # Water properties (you can swap to PropsSI if desired)
+    rho_sw      = unesco_density(Temp_C, salinity_mg_L)
+    mu_dyn      = calculate_dynamic_viscosity_cP(Temp_C, salinity_mg_L)
+    nu          = calculate_kinematic_viscosity(mu_dyn, rho_sw)
+    cond        = calculate_conductivity(Temp_C, salinity_mg_L)
 
     st.markdown(" # Results💡")
 
+    # Two-column layout
     col1, col2 = st.columns(2)
 
     with col1:
-        st.metric("Solubility (mol/L)", f"{sol:.6f}")
-        st.metric("Gas Flow Needed (mol/min)", f"{mol_min:.4f}")
-        st.metric("Actual Gas Volume (m³/hr)", f"{actual_m3_hr:.4f}")
-        st.metric("Normal Gas Volume (Nm³/hr)", f"{normal_m3_hr:.4f}")
+        st.metric("Solubility (mol/L)",          f"{sol:.6f}")
+        st.metric("Gas Flow Needed (mol/min)",   f"{mol_min:.6f}")
+        st.metric("Actual Gas Volume (m³/hr)",   f"{actual_m3_hr:.6f}")
+        st.metric("Normal Gas Volume (Nm³/hr)",  f"{normal_m3_hr:.6f}")
 
     with col2:
-        st.metric("Density (kg/m³)", f"{rho:.2f}")
-        st.metric("Dynamic Viscosity (cP)", f"{mu_dyn:.6e}")
-        st.metric("Kinematic Viscosity (m²/s)", f"{nu:.6e}")
-        st.metric("Conductivity (S/m)", f"{cond:.3f}")
-
-    # st.write(f"**Solubility:** {sol:.6f} mol/L")
-    # st.write(f"**Gas flow needed:** {mol_min:.4f} mol/min")
-    # st.write(f"**Gas volume (actual):** {actual_m3_hr:.4f} m³/hr")
-    # st.write(f"**Gas volume (Normal 0 °C,1 atm):** {normal_m3_hr:.4f} Nm³/hr")
-    # st.write(f"**Density (UNESCO):** {rho:.2f} kg/m³")
-    # st.write(f"**Dynamic viscosity:** {mu_dyn:.6e} cP")
-    # st.write(f"**Kinematic viscosity:** {nu:.6e} m²/s")
-    # st.write(f"**Conductivity:** {cond:.3f} S/m")
+        st.metric("Density (kg/m³)",             f"{rho_sw:62f}")
+        st.metric("Dynamic Viscosity (cP)",      f"{mu_dyn:.6f}")
+        st.metric("Kinematic Viscosity (m²/s)",  f"{nu:.6f}")
+        st.metric("Conductivity (S/m)",          f"{cond:.6f}")
 
     # Graphs
 
@@ -267,7 +335,7 @@ if st.button("Calculate"):
     st.markdown("# Graphs 📊")
 
 
-    temps = np.linspace(Temp_C - 10.0, Temp_C + 10.0, 100)
+    temps = np.linspace(0, Temp_C + 15.0, 20)
     sol_vs_T_mol = [gas_solubility(gas, T, Pressure_atm, salinity_mg_L) for T in temps]
     sol_vs_T_gm3 = [solubility_mol_L_to_g_m3(sol, gas) for sol in sol_vs_T_mol]
 
@@ -283,7 +351,7 @@ if st.button("Calculate"):
     st.plotly_chart(fig_T)
 
     # ------- Solubility vs Pressure -------
-    pressures = np.linspace(Pressure_atm - 0.9, Pressure_atm + 0.9, 100)
+    pressures = np.linspace(0.1, Pressure_atm + 3, 20)
     sol_vs_P_mol  = [gas_solubility(gas, Temp_C, P, salinity_mg_L ) for P in pressures]
     sol_vs_P_gm3 = [solubility_mol_L_to_g_m3(sol, gas) for sol in sol_vs_P_mol]
 
@@ -313,12 +381,12 @@ if st.button("Calculate"):
     
     df_combined = pd.DataFrame(data)
 
-    pivot_combo = df_combined.pivot(index="Temperature (°C)", columns="Pressure (atm)", values="Solubility")
+    pivot_combo = df_combined.pivot(index="Pressure (atm)", columns="Temperature (°C)", values="Solubility")
 
     fig_combo = px.imshow(pivot_combo, aspect='auto', origin='lower',
                           labels={
-                                    "x": "Pressure (atm)",
-                                    "y": "Temperature (°C)",
+                                    "x": "Temperature (°C)",
+                                    "y": "Pressure (atm)",
                                     "color": "Solubility (g/m³)"
                           },
                           title=f"Solubility Heatmap @ {salinity_mg_L:.0f} mg/L, Gas = {gas.title()} 🥵",
