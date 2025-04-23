@@ -1,5 +1,7 @@
 import streamlit as st
 import numpy as np
+import pandas as pd
+import plotly.express as px
 
 # constants
 
@@ -155,16 +157,28 @@ def convert_mol_min_to_m3_hr(mol_per_min, Temp_C, Pressure_atm):
 
 st.title("Gas Solubility and Flow Calculator")
 
-# Temp
+col1, col2 = st.columns(2)
 
-temp_input = st.number_input("Temperatur", value=25.0)
-temp_unit = st.selectbox("Unit", ["°C", "°F"], index=0)
+# Temp
+with col1:
+    temp_input = st.number_input("Temperatur", value=25.0)
+    press_input = st.number_input("Pressure", value=1.0)
+    salinity = st.number_input("Salinity (mg/L)", value=35000.0)
+
+with col2:
+    temp_unit = st.selectbox("Unit", ["°C", "°F"], index=0)
+    press_unit = st.selectbox("Pressure unit", ['atm','barg','psi'], index=0 )
+    flow_rate = st.number_input("Water Flow Rate (L/min)", value=100.0)
+
+# Gas
+gas = st.selectbox("Gas Type", options=list(gas_data.keys()), index=0)
+
+
+
+# Temp Convert    
 Temp_C = fahrenheit_to_celsius(temp_input) if temp_unit == "°F" else temp_input
 
 # Pressure
-
-press_input = st.number_input("Pressure", value=1.0)
-press_unit = st.selectbox("Pressure unit", ['atm','barg','psi'], index=0 )
 if press_unit == "barg":
     Pressure_atm = barg_to_atm(press_input)
 elif press_unit == "psi":
@@ -172,12 +186,6 @@ elif press_unit == "psi":
 else:
     Pressure_atm = press_input
 
-# Salinity & flow
-salinity = st.number_input("Salinity (mg/L)", value=35000.0)
-flow_rate = st.number_input("Water Flow Rate (L/min)", value=100.0)
-
-# Gas selection
-gas = st.selectbox("Gas Type", options=list(gas_data.keys()), index=0)
 
 if st.button("Calculate"):
     sol = gas_solubility(gas, Temp_C, Pressure_atm, salinity)
@@ -188,7 +196,7 @@ if st.button("Calculate"):
     rho_diff = abs(rho_s - rho_u)
     visc = calculate_viscosity(Temp_C, salinity)
 
-    st.subheader("Results")
+    st.markdown(" ## Results ∰")
     st.write(f"**Solubility:** {sol:.6f} mol/L")
     st.write(f"**Gas flow needed:** {mol_per_min:.4f} mol/min")
     st.write(f"**Gas volume:** {m3_per_hr:.4f} m³/hr")
@@ -196,3 +204,17 @@ if st.button("Calculate"):
     st.write(f"**UNESCO density:** {rho_u:.2f} kg/m³")
     st.write(f"**Density difference:** ±{rho_diff:.2f} kg/m³")
     st.write(f"**Viscosity:** {visc:.6f} cP")
+
+    hours = list(range(0,25))
+    buildup = [m3_per_hr * h for h in hours]
+
+    df = pd.DataFrame({
+        "Hours": hours,
+        "Cumulative Gas Volume (m³)": buildup
+    })
+
+    fig = px.line(df, x="Hours", y="Cumulative Gas Volume (m³)", title="Gas Buildup Over Time",
+                labels={"Hours": 'Time (Hours)', "Cumulative Gas Volume (m³)": 'Gas Volume (m³)'},
+                markers=True)
+    st.markdown("### Ploty Chart")
+    st.plotly_chart(fig)
