@@ -31,13 +31,18 @@ def psi_to_atm(psi):
     """Convert pressure from psi to atm."""
     return psi / 14.696
 
-# Salinity conversion
-def salinity_to_mol_L(salinity_mg_L):
-    """Convert salinity from mg/L (assumed NaCl) to mol/L."""
-    molar_mass_NaCl = 58.44  # g/mol
-    # mg/L -> g/L -> mol/L
-    return (salinity_mg_L / 1000.0) / molar_mass_NaCl
+# Salinity conversion (mg/L or ppt → mg/L)
+def salinity_to_mg_L(value, unit):
+    """Convert salinity input from mg/L or ppt to mg/L."""
+    if unit == 'ppt':
+        # 1 ppt ≈ 1 g/L = 1000 mg/L
+        return value * 1000.0
+    return value
 
+def salinity_to_mol_L(salinity_mg_L):
+    """Convert salinity from mg/L NaCl to mol/L."""
+    molar_mass_NaCl = 58.44  # g/mol
+    return (salinity_mg_L / 1000.0) / molar_mass_NaCl
 
 # Gas solubility using van 't Hoff and salinity correction
 def gas_solubility(gas, Temp_C, Pressure_atm, salinity_mg_L):
@@ -63,11 +68,6 @@ def gas_solubility(gas, Temp_C, Pressure_atm, salinity_mg_L):
     C0 = Pressure_atm / H_T
     return C0 * correction
 
-# Density calculations
-def simple_density(Temp_C, salinity_mg_L):
-    """Simple linear model for water density (kg/m^3)."""
-    S = salinity_mg_L / 1000.0  # convert mg/L -> g/L -> kg/kg approx
-    return 1000.0 + (0.668 * S) - (0.001 * S * Temp_C)
 
 def unesco_density(Temp_C, salinity_mg_L):
     """
@@ -108,6 +108,23 @@ def unesco_density(Temp_C, salinity_mg_L):
         + B4 * Temp_C**4
     )
     return rho_sw
+
+# Viscosity: dynamic (Pa·s) and kinematic (m²/s)
+def calculate_dynamic_viscosity(Temp_C, salinity_mg_L):
+    A, B, C = 2.414e-5, 247.8, 140.0
+    T_K = Temp_C + 273.15
+    mu_w = A * 10.0**(B / (T_K - C))
+    S = salinity_mg_L / 1000.0
+    return mu_w * (1.0 + 0.001 * S)
+
+def calculate_kinematic_viscosity(mu_dyn, rho):
+    return mu_dyn / rho
+
+# Electrical conductivity (S/m)
+def calculate_conductivity(Temp_C, salinity_mg_L):
+    S = salinity_mg_L / 1000.0
+    C_ref, a, b = 4.2914, 0.0207, -0.00004
+    return C_ref * (S / 35.0) * (1 + a*(Temp_C - 15.0) + b*(Temp_C - 15.0)**2)
 
 # Viscosity (cP)
 def calculate_viscosity(Temp_C, salinity_mg_L):
@@ -153,6 +170,15 @@ def convert_mol_min_to_m3_hr(mol_per_min, Temp_C, Pressure_atm):
     # convert to m3/hr
     return vol_m3_s * 3600.0
 
+def convert_mol_min_to_normal_m3_hr(mol_per_min, T_norm_K=273.15, P_norm_Pa=101325.0):
+    """
+    Convert molar flow (mol/min) to Normal m³/hr,
+    i.e. at 0 °C (273.15 K) and 1 atm (101 325 Pa).
+    """
+    mol_per_sec = mol_per_min / 60.0
+    vol_m3_s = (mol_per_sec * R * T_norm_K) / P_norm_Pa
+    return vol_m3_s * 3600.0
+
 # --- App ---
 
 st.title("Gas Solubility and Flow Calculator")
@@ -163,17 +189,19 @@ col1, col2 = st.columns(2)
 with col1:
     temp_input = st.number_input("Temperatur", value=25.0)
     press_input = st.number_input("Pressure", value=1.0)
-    salinity = st.number_input("Salinity (mg/L)", value=35000.0)
+    t_s = st.number_input("Salinity value", value=35.0)
+    gas = st.selectbox("Gas Type", options=list(gas_data.keys()), index=0)
+
 
 with col2:
     temp_unit = st.selectbox("Unit", ["°C", "°F"], index=0)
     press_unit = st.selectbox("Pressure unit", ['atm','barg','psi'], index=0 )
-    flow_rate = st.number_input("Water Flow Rate (L/min)", value=100.0)
+    unit_s = st.selectbox("Salinity unit", ["mg/L","ppt"], index=1)
+    flow_m3_hr = st.number_input("Water Flow Rate (m³/hr)", value=1.0)
 
-# Gas
-gas = st.selectbox("Gas Type", options=list(gas_data.keys()), index=0)
-
-
+# convert to min for functions   
+flow_L_min = (flow_m3_hr * 1000.0) / 60.0
+salinity_mg_L = salinity_to_mg_L(t_s, unit_s)
 
 # Temp Convert    
 Temp_C = fahrenheit_to_celsius(temp_input) if temp_unit == "°F" else temp_input
@@ -188,33 +216,37 @@ else:
 
 
 if st.button("Calculate"):
-    sol = gas_solubility(gas, Temp_C, Pressure_atm, salinity)
-    mol_per_min = gas_flow_rate_needed(sol, flow_rate)
-    m3_per_hr = convert_mol_min_to_m3_hr(mol_per_min, Temp_C, Pressure_atm)
-    rho_s = simple_density(Temp_C, salinity)
-    rho_u = unesco_density(Temp_C, salinity)
-    rho_diff = abs(rho_s - rho_u)
-    visc = calculate_viscosity(Temp_C, salinity)
+    # solubility & flow
+    sol = gas_solubility(gas, Temp_C, Pressure_atm, salinity_mg_L)
+    mol_min = gas_flow_rate_needed(sol, flow_L_min)
+    actual_m3_hr = convert_mol_min_to_m3_hr(mol_min, Temp_C, Pressure_atm)
+    normal_m3_hr = convert_mol_min_to_normal_m3_hr(mol_min)
+
+    rho = unesco_density(Temp_C, salinity_mg_L)
+    mu_dyn = calculate_dynamic_viscosity(Temp_C, salinity_mg_L)
+    nu = calculate_kinematic_viscosity(mu_dyn, rho)
+    cond = calculate_conductivity(Temp_C, salinity_mg_L)
 
     st.markdown(" ## Results ∰")
     st.write(f"**Solubility:** {sol:.6f} mol/L")
-    st.write(f"**Gas flow needed:** {mol_per_min:.4f} mol/min")
-    st.write(f"**Gas volume:** {m3_per_hr:.4f} m³/hr")
-    st.write(f"**Simple density:** {rho_s:.2f} kg/m³")
-    st.write(f"**UNESCO density:** {rho_u:.2f} kg/m³")
-    st.write(f"**Density difference:** ±{rho_diff:.2f} kg/m³")
-    st.write(f"**Viscosity:** {visc:.6f} cP")
+    st.write(f"**Gas flow needed:** {mol_min:.4f} mol/min")
+    st.write(f"**Gas volume (actual):** {actual_m3_hr:.4f} m³/hr")
+    st.write(f"**Gas volume (Normal 0 °C,1 atm):** {normal_m3_hr:.4f} Nm³/hr")
+    st.write(f"**Density (UNESCO):** {rho:.2f} kg/m³")
+    st.write(f"**Dynamic viscosity:** {mu_dyn:.6e} cP")
+    st.write(f"**Kinematic viscosity:** {nu:.6e} m²/s")
+    st.write(f"**Electrical conductivity:** {cond:.3f} S/m")
 
-    hours = list(range(0,25))
-    buildup = [m3_per_hr * h for h in hours]
+# hours = list(range(0,25))
+# buildup = [m3_per_hr * h for h in hours]
 
-    df = pd.DataFrame({
-        "Hours": hours,
-        "Cumulative Gas Volume (m³)": buildup
-    })
+# df = pd.DataFrame({
+#     "Hours": hours,
+#     "Cumulative Gas Volume (m³)": buildup
+# })
 
-    fig = px.line(df, x="Hours", y="Cumulative Gas Volume (m³)", title="Gas Buildup Over Time",
-                labels={"Hours": 'Time (Hours)', "Cumulative Gas Volume (m³)": 'Gas Volume (m³)'},
-                markers=True)
-    st.markdown("### Ploty Chart")
-    st.plotly_chart(fig)
+# fig = px.line(df, x="Hours", y="Cumulative Gas Volume (m³)", title="Gas Buildup Over Time",
+#               labels={"Hours": 'Time (Hours)', "Cumulative Gas Volume (m³)": 'Gas Volume (m³)'},
+#               markers=True)
+# st.markdown("### Ploty Chart")
+# st.plotly_chart(fig)
